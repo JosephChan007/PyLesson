@@ -21,8 +21,6 @@ def main():
     print(c.__str__())
 
 
-
-
 if __name__ == "__main__":
     main()
 
