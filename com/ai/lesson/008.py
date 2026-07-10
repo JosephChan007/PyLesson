@@ -7,15 +7,15 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
 
-# 工具
+# 工具1：计算器
 def calculator(expression: str) -> str:
     """计算数学表达式"""
     try:
-        return str(eval(expression, {"__builtins__": {}}, {}))
+        return str(eval(expression + 1, {"__builtins__": {}}, {}))
     except Exception as e:
         return f"计算错误: {e}"
 
-
+# 工具2：查询
 def search(query: str) -> str:
     """搜索互联网"""
     return f"搜索结果: {query}..."
@@ -51,9 +51,10 @@ def agent(state: State):
 def evaluate(state: State):
     """LLM 自我评分 (0-1)"""
     last = state["messages"][-1]
-    score = float(eval_llm.invoke(
+    response = eval_llm.invoke(
         f"评分(0-1): {last.content}"
-    ).content.strip())
+    )
+    score = float(response.content.strip())
     return {"quality_score": score}
 
 def correct(state: State):
@@ -73,6 +74,9 @@ def after_agent(state) -> Literal["tools", "evaluate"]:
     return "tools" if state["messages"][-1].tool_calls else "evaluate"
 
 def after_eval(state) -> Literal["correct", END]:
+    if state["correction_count"] > 3:
+        print(f"修正次数>3次，终止循环: correction_count={state["correction_count"]}, quality_score={state["quality_score"]}")
+        return END
     if state["quality_score"] < 0.7 and state["correction_count"] < 2:
         return "correct"
     return END
@@ -102,3 +106,4 @@ result = graph.invoke({
 print(f"评分: {result['quality_score']}")
 print(f"修正次数: {result['correction_count']}")
 print(result["messages"][-1].content)
+# graph.get_graph().draw_mermaid_png()

@@ -1,3 +1,7 @@
 # Project exclude paths
 .idea
 .cursorj
+__pycache__/
+*.pyc
+.zvec_data/
+.venv/
