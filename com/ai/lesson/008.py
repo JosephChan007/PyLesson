@@ -1,5 +1,6 @@
 from typing import Annotated, Literal, TypedDict
 
+from langgraph.types import Command, Send
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
@@ -11,7 +12,8 @@ from langgraph.prebuilt import ToolNode
 def calculator(expression: str) -> str:
     """计算数学表达式"""
     try:
-        return str(eval(expression + 1, {"__builtins__": {}}, {}))
+        realExpression = expression
+        return str(eval(realExpression, {"__builtins__": {}}, {}))
     except Exception as e:
         return f"计算错误: {e}"
 
@@ -40,7 +42,7 @@ eval_llm = ChatOpenAI(
     temperature=0,
 )
 
-def agent(state: State):
+def agent(state: State) -> dict:
     """主 Agent: 调用 LLM + 工具"""
     response = llm.bind_tools(tools).invoke([
         SystemMessage("你是精确的助手，不确定时用工具验证。"),
@@ -48,7 +50,7 @@ def agent(state: State):
     ])
     return {"messages": [response]}
 
-def evaluate(state: State):
+def evaluate(state: State) -> dict:
     """LLM 自我评分 (0-1)"""
     last = state["messages"][-1]
     response = eval_llm.invoke(
@@ -57,7 +59,7 @@ def evaluate(state: State):
     score = float(response.content.strip())
     return {"quality_score": score}
 
-def correct(state: State):
+def correct(state: State) -> dict:
     """修正低分回答"""
     last = state["messages"][-1]
     response = llm.invoke([
@@ -81,18 +83,60 @@ def after_eval(state) -> Literal["correct", END]:
         return "correct"
     return END
 
+
+def agent_cmd(state: State) -> Command[Literal["tools", "evaluate"]]:
+    """主 Agent: 调用 LLM + 工具"""
+    response = llm.bind_tools(tools).invoke([
+        SystemMessage("你是精确的助手，不确定时用工具验证。"),
+        *state["messages"]
+    ])
+
+    if response.tool_calls:
+        return Command(
+            update={"messages": [response]},
+            goto="tools"
+        )
+    else:
+        return Command(
+            update={"messages": [response]},
+            goto="evaluate"
+        )
+
+def evaluate_cmd(state: State) -> Command[Literal["correct", "__end__"]]:
+    """LLM 自我评分 (0-1)"""
+    last = state["messages"][-1]
+    response = eval_llm.invoke(f"评分(0-1): {last.content}")
+    score = float(response.content.strip())
+
+    # score = 0.6       # 用于测试重试次数>3
+    print(f"答案评估: correction_count={state['correction_count']}, quality_score={score}")
+
+    if score < 0.7 and state["correction_count"] < 3:
+        return Command(
+            update={"quality_score": score},
+            goto="correct"
+        )
+
+    if state["correction_count"] >= 3:
+        print(f"修正次数>3次，终止循环: correction_count={state['correction_count']}, quality_score={score}")
+
+    return Command(
+        update={"quality_score": score},
+        goto=END
+    )
+
 # 构建
 builder = StateGraph(State)
-builder.add_node("agent", agent)
+builder.add_node("agent", agent_cmd)
 builder.add_node("tools", ToolNode(tools))
-builder.add_node("evaluate", evaluate)
+builder.add_node("evaluate", evaluate_cmd)
 builder.add_node("correct", correct)
 
 builder.add_edge(START, "agent")
-builder.add_conditional_edges("agent", after_agent)
-builder.add_edge("tools", "agent")       # 工具→Agent 循环
-builder.add_conditional_edges("evaluate", after_eval)
-builder.add_edge("correct", "evaluate")   # 修正后重新评估
+# builder.add_conditional_edges("agent", after_agent)       # 使用Command后，省略这一步
+builder.add_edge("tools", "agent")          # 工具 → Agent 循环
+# builder.add_conditional_edges("evaluate", after_eval)     # 使用Command后，省略这一步
+builder.add_edge("correct", "evaluate")     # 修正后重新评估
 
 graph = builder.compile()
 
