@@ -127,8 +127,10 @@ def evaluate_cmd(state: State) -> Command[Literal["correct", "__end__"]]:
 
 # 构建
 builder = StateGraph(State)
+# builder.add_node("agent", agent)
 builder.add_node("agent", agent_cmd)
 builder.add_node("tools", ToolNode(tools))
+# builder.add_node("evaluate", evaluate)
 builder.add_node("evaluate", evaluate_cmd)
 builder.add_node("correct", correct)
 
